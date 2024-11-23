@@ -13,10 +13,10 @@ TIME_HORIZON = 780  # Total time in minutes (e.g., 13 hours from 9:00 to 22:00)
 # Example input data
 time_of_use_prices = {"off-peak": 0.06, "mid-peak": 0.10, "on-peak": 0.13}
 charging_methods = {
-    1: {"power": 120, "damage_cost": 8.75, "charging_time": 60},
-    2: {"power": 80, "damage_cost": 3.50, "charging_time": 90},
-    3: {"power": 60, "damage_cost": 0.70, "charging_time": 120},
-    4: {"power": 40, "damage_cost": 0.0, "charging_time": 180},
+    1: {"base_price": 21, "power": 120, "damage_cost": 8.75, "charging_time": 100},
+    2: {"base_price": 21, "power": 80, "damage_cost": 3.50, "charging_time": 150},
+    3: {"base_price": 21, "power": 60, "damage_cost": 0.70, "charging_time": 200},
+    4: {"base_price": 21, "power": 40, "damage_cost": 0.0, "charging_time": 300},
 }
 
 # Generate normally distributed arrival times
@@ -46,11 +46,12 @@ def fitness(solution, orders, charging_methods, time_of_use_prices):
         order = orders[i]
         charger = charging_methods[method]
         # Battery cost
-        battery_cost = charger["damage_cost"]
+        battery_cost = charger["base_price"]
+        damage_cost = charger["damage_cost"]
         # Electricity cost
         time_of_day = "on-peak" if order["arrival_time"] % 360 < 120 else "mid-peak"
         electricity_cost = charger["power"] * time_of_use_prices[time_of_day]
-        total_cost += battery_cost + electricity_cost
+        total_cost += battery_cost + electricity_cost + damage_cost
     return -total_cost  # Minimize cost
 
 def track_metrics(solution, orders, charging_methods):
@@ -140,45 +141,38 @@ def genetic_algorithm():
 def random_assignment(num_orders, num_methods):
     return np.random.randint(1, num_methods + 1, size=num_orders)
 
-# Evaluate cost for a given solution
-def evaluate_solution(solution, orders, charging_methods, time_of_use_prices):
-    total_cost = 0
-    for i, method in enumerate(solution):
-        order = orders[i]
-        charger = charging_methods[method]
-        # Battery cost (charging damage)
-        battery_cost = charger["damage_cost"]
-        # Electricity cost
-        time_of_day = "on-peak" if order["arrival_time"] % 360 < 120 else "mid-peak"
-        electricity_cost = charger["power"] * time_of_use_prices[time_of_day]
-        total_cost += battery_cost + electricity_cost
-    return total_cost
-
 # Final cost breakdown after the GA finishes
 def calculate_final_costs(solution, orders, charging_methods, time_of_use_prices):
-    battery_damage_cost = 0
-    electricity_cost = 0
-    total_cost = 0
+    avg_battery_damage_cost = 0
+    avg_electricity_cost = 0
+    avg_total_cost = 0
+    avg_battery_stocking_cost = 0
 
     for i, method in enumerate(solution):
         order = orders[i]
         charger = charging_methods[method]
 
         # Battery damage cost
-        battery_damage_cost += charger["damage_cost"]
+        avg_battery_damage_cost += charger["damage_cost"]
+        avg_battery_stocking_cost += charger["base_price"]
 
         # Electricity cost
         time_of_day = "on-peak" if order["arrival_time"] % 360 < 120 else "mid-peak"
-        electricity_cost += charger["power"] * time_of_use_prices[time_of_day]
+        avg_electricity_cost += charger["power"] * time_of_use_prices[time_of_day]
 
         # Total cost
-        total_cost += charger["damage_cost"] + charger["power"] * time_of_use_prices[time_of_day]
+        avg_total_cost += charger["damage_cost"] + charger["power"] * time_of_use_prices[time_of_day] 
+    
+    battery_damage_cost = avg_battery_damage_cost / len(solution)
+    electricity_cost = avg_electricity_cost / len(solution)
+    battery_stocking_cost = charger["base_price"] * (-min(battery_stock)) / len(solution)
+    total_cost = avg_total_cost / len(solution) + battery_stocking_cost
 
-    return battery_damage_cost, electricity_cost, total_cost
+    return battery_damage_cost, electricity_cost, total_cost, battery_stocking_cost
 
 # Run GA
 best_solution, best_cost = genetic_algorithm()
-best_cost2 = evaluate_solution(best_solution, orders, charging_methods, time_of_use_prices)
+# best_power = track_metrics(best_solution, orders, charging_methods)
 
 
 
@@ -188,12 +182,14 @@ for order in orders:
     arrival_counts[order["arrival_time"]] += 1
 
 # Calculate final costs
-battery_damage_cost, electricity_cost, total_cost = calculate_final_costs(best_solution, orders, charging_methods, time_of_use_prices)
+battery_damage_cost, electricity_cost, total_cost, stocking_cost = calculate_final_costs(best_solution, orders, charging_methods, time_of_use_prices)
 
 # Print the final average costs
 print(f"Final Average Battery Damage Cost: ${battery_damage_cost:.2f}")
 print(f"Final Average Electricity Cost: ${electricity_cost:.2f}")
-print(f"Final Average Total Cost: ${total_cost:.2f}")
+print(f"Final Average Battery Stocking Cost: ${stocking_cost:.2f}")
+print(f"Final Average Total Cost: ${total_cost:.2f}")   
+print(f"Battery Stock: {-min(battery_stock)}")
 
 # Plot Arrival Times
 plt.figure(figsize=(12, 4))
@@ -246,10 +242,19 @@ power_usage = np.zeros(TIME_HORIZON)
 
 # Generate and evaluate random solution
 random_solution = random_assignment(NUM_ORDERS, NUM_METHODS)
-random_cost = evaluate_solution(random_solution, orders, charging_methods, time_of_use_prices)
 random_power_usage = track_metrics(random_solution, orders, charging_methods)
 
-print(f"Cost with Random Assignment: ${random_cost:.2f}")
+
+# Calculate final costs
+battery_damage_cost, electricity_cost, total_cost, stocking_cost = calculate_final_costs(random_solution, orders, charging_methods, time_of_use_prices)
+
+# Print the final average costs
+print("Costs with random assignment")
+print(f"Final Average Battery Damage Cost: ${battery_damage_cost:.2f}")
+print(f"Final Average Electricity Cost: ${electricity_cost:.2f}")
+print(f"Final Average Battery Stocking Cost: ${stocking_cost:.2f}")
+print(f"Final Average Total Cost: ${total_cost:.2f}")   
+print(f"Battery Stock: {-min(battery_stock)}")
 
 # Plot graphs for Random Assignment
 # Battery Stock vs Time
